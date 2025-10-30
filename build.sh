@@ -17,5 +17,5 @@ fi
 find . -type f -name "*.lua" -not -path "*/$BUILD_DIR/*" -exec cp --parents {} "$BUILD_DIR" \;
 
 pushd dist
-~/.local/bin/luvi . -o exe
+luastatic main.lua -llua5.4
 popd

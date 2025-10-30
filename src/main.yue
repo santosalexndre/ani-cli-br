@@ -8,9 +8,7 @@ format_to_link = (name) ->
         \gsub("[^%w+%-:]", "-") -- substitute everything thats not a alphanumeric character or a - or : with a hyphen
         \lower() -- make it lower case, dont know if it matters tho
 
---- anime.fire data looks like : https://animefire.plus/video/mushoku-no-eiyuu-betsu-ni-skill-nanka-iranakatta-n-da-ga/1?tempsubs=1&1761802280
---- we can easily get the last random number part with their download button
---- TODO: find out what the fuck this token is lol
+
 extract_stream_options = (anime_name, episode_index, episode_html_page) ->
     episode_id = episode_html_page\match('<a.-/download/.-%?(%d+)')
     data_link = "https://animefire.plus/video/#{anime_name}/#{episode_index}?tempsubs=#{episode_index}&#{episode_id}"
@@ -22,7 +20,7 @@ extract_stream_options = (anime_name, episode_index, episode_html_page) ->
 extract_episode_list = (anime_html_page) ->
     episodes = []
     for link, index in anime_html_page\gmatch('href="(https://animefire%.plus/animes/[%w%-]+/(%d+))')
-        assert(episode_index and episode_link, "couldn't get episode list")
+        assert(episode_index and episode_link)
         episodes[] = { :index, :link }
     return episodes
 
