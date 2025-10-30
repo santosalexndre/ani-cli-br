@@ -20,7 +20,7 @@ extract_stream_options = (anime_name, episode_index, episode_html_page) ->
 extract_episode_list = (anime_html_page) ->
     episodes = []
     for link, index in anime_html_page\gmatch('href="(https://animefire%.plus/animes/[%w%-]+/(%d+))')
-        assert(episode_index and episode_link)
+        assert(index and link, "couldn't get episode list")
         episodes[] = { :index, :link }
     return episodes
 
