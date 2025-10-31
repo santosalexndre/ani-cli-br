@@ -1,3 +1,4 @@
+#!/usr/bin/env lua
 --
 -- json.lua
 --
@@ -380,4 +381,137 @@ function json.decode(str)
     return res
 end
 
-return json
+------------------------------------------------------
+-- Main program
+------------------------------------------------------
+
+function os.capture(cmd, raw)
+    local f = assert(io.popen(cmd, 'r'))
+    local s = assert(f:read('*a'))
+    f:close()
+    if raw then return s end
+    s = string.gsub(s, '^%s+', '')
+    s = string.gsub(s, '%s+$', '')
+    s = string.gsub(s, '[\n\r]+', ' ')
+    return s
+end
+
+local function fetch(link)
+    return os.capture("curl -s " .. link)
+end
+
+local function format_to_link(name)
+    return name:gsub("[%(%)]", ""):gsub("[^%w+%-:]", "-"):lower()
+end
+
+local function extract_stream_options(anime_name, episode_index, episode_html_page)
+    local episode_id = episode_html_page:match('<a.-/download/.-%?(%d+)')
+    print("Episode id: ", episode_id)
+    local data_link = string.format(
+        "https://animefire.plus/video/%s/%s?tempsubs=%s&%s",
+        anime_name,
+        episode_index,
+        episode_index,
+        episode_id
+    )
+    print("Data link: ", data_link)
+    local res = fetch(data_link)
+    local data = json.decode(res)
+    return { table.unpack(data.data) }, token
+end
+
+local function extract_episode_list(anime_html_page)
+    local episodes = {}
+    for link, index in anime_html_page:gmatch('href="(https://animefire%.plus/animes/[%w%-]+/(%d+))') do
+        assert(index and link, "couldn't get episode list")
+        print("testando?")
+        table.insert(episodes, { index = index, link = link })
+    end
+    print(#episodes)
+    return episodes
+end
+
+local function extract_anime_list(search_html_page)
+    local animes = {}
+    for title in search_html_page:gmatch('title="(.-) %- Todos os') do
+        table.insert(animes, {
+            name = title,
+            link = string.format("https://animefire.plus/animes/%s-todos-os-episodios",
+                format_to_link(title))
+        })
+    end
+    return animes
+end
+
+
+local function search_anime(name)
+    local link = string.format("https://animefire.plus/pesquisar/%s", format_to_link(name))
+    local res, code, headers, status = fetch(link)
+    return res
+end
+
+local function main()
+    --------------------------------------------
+    local input = arg[1]
+    if not input then
+        print "Choose anime name"
+        input = io.read()
+    end
+
+    --- search page
+    local search_page = search_anime(input)
+    local anime_list = extract_anime_list(search_page)
+
+    local which_anime = nil
+    local which_episode = nil
+    if #anime_list > 1 then
+        print "which anime do you wanna watch?"
+        for i, anime in ipairs(anime_list) do
+            print(i .. ": ", anime.name)
+        end
+        which_anime = tonumber(io.read())
+        assert(which_anime)
+    end
+
+    local anime = anime_list[which_anime]
+
+    --- get anime overview page with respective episodes
+    local page, code, headers, status = fetch(anime.link)
+    local episode_list = extract_episode_list(page)
+
+    print "Qual episodio?"
+    for index, _ in ipairs(episode_list) do
+        print(index)
+    end
+
+    which_episode = tonumber(io.read())
+
+    assert(which_episode)
+
+    local ep = episode_list[which_episode]
+    print("Which ep: ", ep.index, ep.link)
+
+    --- get the episode page with the video player
+    print 'Getting episode page-------------------------------------------'
+    local episode_page = fetch(ep.link)
+    local options, token = extract_stream_options(format_to_link(anime.name), which_episode, episode_page)
+    local stream_link = token
+    local opt = nil
+    if #options > 1 then
+        print "which quality to stream?"
+
+        for i, opt in ipairs(options) do
+            print(i .. ": " .. opt.label)
+        end
+        opt = tonumber(io.read())
+        assert(opt)
+        stream_link = options[opt].src
+    end
+
+    --- stream it using mpv
+    if stream_link then
+        os.execute("mpv " .. stream_link .. " --title='" .. anime.name .. " - " .. ep.index .. "'")
+    end
+end
+
+main()
