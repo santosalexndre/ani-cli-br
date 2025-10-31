@@ -48,7 +48,7 @@ end
 
 
 local function escape_char(c)
-    return "\\" .. (escape_char_map[c] or string.format("u%04x", c:byte()))
+    return "\\" .. (escape_char_map[c] or fmt("u%04x", c:byte()))
 end
 
 
@@ -108,7 +108,7 @@ local function encode_number(val)
     if val ~= val or val <= -math.huge or val >= math.huge then
         error("unexpected number value '" .. tostring(val) .. "'")
     end
-    return string.format("%.14g", val)
+    return fmt("%.14g", val)
 end
 
 
@@ -181,7 +181,7 @@ local function decode_error(str, idx, msg)
             col_count = 1
         end
     end
-    error(string.format("%s at line %d col %d", msg, line_count, col_count))
+    error(fmt("%s at line %d col %d", msg, line_count, col_count))
 end
 
 
@@ -198,7 +198,7 @@ local function codepoint_to_utf8(n)
         return string.char(f(n / 262144) + 240, f(n % 262144 / 4096) + 128,
             f(n % 4096 / 64) + 128, n % 64 + 128)
     end
-    error(string.format("invalid unicode codepoint '%x'", n))
+    error(fmt("invalid unicode codepoint '%x'", n))
 end
 
 
@@ -385,6 +385,8 @@ end
 -- Main program
 ------------------------------------------------------
 
+local fmt = string.format
+
 function os.capture(cmd, raw)
     local f = assert(io.popen(cmd, 'r'))
     local s = assert(f:read('*a'))
@@ -397,120 +399,161 @@ function os.capture(cmd, raw)
 end
 
 local function fetch(link)
-    return os.capture("curl -s " .. link)
+    return os.capture(fmt('curl -s "%s"', link))
 end
 
-local function format_to_link(name)
+local anime_fire = {}
+
+function anime_fire.format_to_link(name)
     return name:gsub("[%(%)]", ""):gsub("[^%w+%-:]", "-"):lower()
 end
 
-local function extract_stream_options(anime_name, episode_index, episode_html_page)
+function anime_fire.extract_stream_options(anime_name, episode_index, episode_html_page)
     local episode_id = episode_html_page:match('<a.-/download/.-%?(%d+)')
-    print("Episode id: ", episode_id)
-    local data_link = string.format(
+    local data_link = fmt(
         "https://animefire.plus/video/%s/%s?tempsubs=%s&%s",
         anime_name,
         episode_index,
         episode_index,
         episode_id
     )
-    print("Data link: ", data_link)
     local res = fetch(data_link)
     local data = json.decode(res)
-    return { table.unpack(data.data) }, token
+    -- TODO: Find out what this token is
+    -- (it seems that if an anime has only one resolution option then the links from data dont work and we have to use this token)
+    return { table.unpack(data.data) }, data.token
 end
 
-local function extract_episode_list(anime_html_page)
+function anime_fire.extract_episode_list(anime_html_page)
     local episodes = {}
     for link, index in anime_html_page:gmatch('href="(https://animefire%.plus/animes/[%w%-]+/(%d+))') do
         assert(index and link, "couldn't get episode list")
-        print("testando?")
         table.insert(episodes, { index = index, link = link })
     end
     print(#episodes)
     return episodes
 end
 
-local function extract_anime_list(search_html_page)
+function anime_fire.extract_anime_list(search_html_page)
     local animes = {}
-    for title in search_html_page:gmatch('title="(.-) %- Todos os') do
+    for title in search_html_page:gmatch('title="(.-) %- ') do
         table.insert(animes, {
             name = title,
-            link = string.format("https://animefire.plus/animes/%s-todos-os-episodios",
-                format_to_link(title))
+            link = fmt("https://animefire.plus/animes/%s-todos-os-episodios",
+                anime_fire.format_to_link(title))
         })
     end
     return animes
 end
 
-
-local function search_anime(name)
-    local link = string.format("https://animefire.plus/pesquisar/%s", format_to_link(name))
-    local res, code, headers, status = fetch(link)
+function anime_fire.search_anime(name)
+    local link = fmt("https://animefire.plus/pesquisar/%s", anime_fire.format_to_link(name))
+    local res = fetch(link)
     return res
 end
 
+local function choose(msg, options, key)
+    if options and #options == 1 then return options[1] end
+
+    if not options then
+        print(msg)
+        return io.read()
+    end
+
+    if key then assert(options[1][key], 'invalid key value for function: ask') end
+
+    local opts = {}
+    for i, element in ipairs(options) do
+        if key then
+            table.insert(opts, i .. ": " .. element[key])
+        else
+            table.insert(opts, i)
+        end
+    end
+
+    print(msg)
+
+    for _, opt in ipairs(opts) do print(opt) end
+
+    ::again::
+    local input = tonumber(io.read())
+    if input == nil or input <= 0 or input > #options then
+        print(fmt("Opcao invalida. Deve ser um numero entre %s - %s", 1, #options))
+        goto again
+    end
+    return options[input]
+end
+
+local function parse_args(args)
+    local commands = {}
+
+    for i = #args, 1, -1 do
+        local a = args[i]
+        if a == '-v' then
+            table.insert(commands, { name = 'get_version', param = args[i + 1] })
+            return nil, commands
+        elseif a == '-d' then
+            table.insert(commands, { name = 'download' })
+            table.remove(commands, i)
+        end
+    end
+
+    if #arg > 1 then
+        return table.concat(args, ' '), commands
+    elseif #arg == 1 then
+        return arg[1], commands
+    end
+
+    return nil, commands
+end
+
+local scrapper = anime_fire
+
+local function get_anime_list(input)
+    local search_page = scrapper.search_anime(input)
+    return scrapper.extract_anime_list(search_page)
+end
+
+local function get_episode_list(anime)
+    local page = fetch(anime.link)
+    return scrapper.extract_episode_list(page)
+end
+
+local function get_episode_link(anime, episode)
+    print("link do episodio: ", episode.link)
+    local episode_page = fetch(episode.link)
+    return scrapper.extract_stream_options(scrapper.format_to_link(anime.name), episode.index, episode_page)
+end
+
+local function join_options(list, key)
+
+end
+
+--------------------------------------------
 local function main()
-    --------------------------------------------
-    local input = arg[1]
-    if not input then
-        print "Choose anime name"
-        input = io.read()
+    local input, commands = parse_args(arg)
+    if #commands >= 1 then
+        return print('Not Implemented Yet')
     end
 
-    --- search page
-    local search_page = search_anime(input)
-    local anime_list = extract_anime_list(search_page)
+    if not input then input = choose('Escole um anime') end
 
-    local which_anime = nil
-    local which_episode = nil
-    if #anime_list > 1 then
-        print "which anime do you wanna watch?"
-        for i, anime in ipairs(anime_list) do
-            print(i .. ": ", anime.name)
-        end
-        which_anime = tonumber(io.read())
-        assert(which_anime)
-    end
+    local anime_list = get_anime_list(input)
+    local anime = choose("Resultados para: " .. input, anime_list, 'name')
 
-    local anime = anime_list[which_anime]
+    local episode_list = get_episode_list(anime)
+    local ep = choose("Qual episodio?", episode_list)
 
-    --- get anime overview page with respective episodes
-    local page, code, headers, status = fetch(anime.link)
-    local episode_list = extract_episode_list(page)
-
-    print "Qual episodio?"
-    for index, _ in ipairs(episode_list) do
-        print(index)
-    end
-
-    which_episode = tonumber(io.read())
-
-    assert(which_episode)
-
-    local ep = episode_list[which_episode]
-    print("Which ep: ", ep.index, ep.link)
-
-    --- get the episode page with the video player
-    print 'Getting episode page-------------------------------------------'
-    local episode_page = fetch(ep.link)
-    local options, token = extract_stream_options(format_to_link(anime.name), which_episode, episode_page)
+    local options, token = get_episode_link(anime, ep)
     local stream_link = token
-    local opt = nil
-    if #options > 1 then
-        print "which quality to stream?"
 
-        for i, opt in ipairs(options) do
-            print(i .. ": " .. opt.label)
-        end
-        opt = tonumber(io.read())
-        assert(opt)
-        stream_link = options[opt].src
+    if #options > 1 then
+        local quality = choose("Qualidades disponiveis: ", options, 'label')
+        stream_link = quality and quality.src or token
     end
 
-    --- stream it using mpv
     if stream_link then
-        os.execute("mpv " .. stream_link .. " --title='" .. anime.name .. " - " .. ep.index .. "'")
+        os.execute(fmt("mpv '%s' --title='%s - %s'", stream_link, anime.name, ep.index))
     end
 end
 
