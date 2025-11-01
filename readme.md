@@ -6,12 +6,12 @@ primeiro instala as dependencia:
 
 Arch:
 ```
-sudo pacman -S curl lua
+sudo pacman -S curl lua mpv yt-dlp
 ```
 
 Fedora:
 ```
-sudo dnf install curl lua
+sudo dnf install curl lua mpv yt-dlp
 ```
 
 Windows:
